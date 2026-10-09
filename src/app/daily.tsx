@@ -22,6 +22,7 @@ export default function DailyScreen() {
   return (
     <SoloGame
       title="Daily Puzzle"
+      saveSlot={{ kind: 'daily', date: daily.date }}
       animals={animalsFor(daily.biome)}
       modifiers={{ rules: daily.twists, terrain: biome.terrain }}
       makeGame={() => ({

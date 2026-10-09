@@ -1,7 +1,10 @@
+import Constants from 'expo-constants';
+import * as Linking from 'expo-linking';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { AnimalIcon } from '../components/AnimalIcon';
 import { Segmented } from '../components/Segmented';
+import { PRIVACY_POLICY_URL, PUBLISHER, TERMS_OF_SERVICE_URL } from '../lib/legal';
 import { useSettings, type MistakeLimit, type Settings } from '../lib/settings';
 import type { Difficulty } from '../lib/sudoku';
 import { colors } from '../lib/theme';
@@ -114,7 +117,31 @@ export default function SettingsScreen() {
       <Pressable onPress={reset} style={({ pressed }) => [styles.reset, pressed && { opacity: 0.6 }]}>
         <Text style={styles.resetText}>Reset to defaults</Text>
       </Pressable>
+
+      <Text style={styles.section}>About</Text>
+      <View style={styles.card}>
+        <LinkRow label="Privacy Policy" url={PRIVACY_POLICY_URL} />
+        <LinkRow label="Terms of Service" url={TERMS_OF_SERVICE_URL} divider />
+      </View>
+      <Text style={styles.footer}>
+        Animal Sudoku {Constants.expoConfig?.version ?? ''} · © {new Date().getFullYear()} {PUBLISHER}
+      </Text>
     </ScrollView>
+  );
+}
+
+/** A settings row that opens a web page in the browser. */
+function LinkRow({ label, url, divider }: { label: string; url: string; divider?: boolean }) {
+  return (
+    <Pressable
+      onPress={() => Linking.openURL(url).catch(() => {})}
+      style={({ pressed }) => [styles.row, divider && styles.rowDivider, pressed && { opacity: 0.6 }]}
+      accessibilityRole="link"
+      accessibilityHint="Opens in your browser"
+    >
+      <Text style={[styles.rowLabel, styles.rowText]}>{label}</Text>
+      <Text style={styles.linkArrow}>↗</Text>
+    </Pressable>
   );
 }
 
@@ -177,6 +204,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 8,
+  },
+  linkArrow: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  footer: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 12,
   },
   reset: {
     alignSelf: 'center',

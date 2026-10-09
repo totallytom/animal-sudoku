@@ -17,6 +17,8 @@ export default function QuickPlayScreen() {
   return (
     <SoloGame
       title={TITLES[size]}
+      saveSlot={{ kind: 'quick', size }}
+      saveTitle={`Quick play ${TITLES[size]}`}
       animals={STARTER_ANIMALS}
       allowNewGame
       makeGame={() => ({

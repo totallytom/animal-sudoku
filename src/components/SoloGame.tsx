@@ -1,29 +1,25 @@
 import { router, Stack } from 'expo-router';
-import { useEffect, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { AppState, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AnimalSetContext, type Animal } from '../lib/animals';
 import type { TerrainKind } from '../lib/biomes';
+import type { GameSetupData } from '../lib/gameSetup';
 import { useReducedMotion } from '../lib/motion';
 import { useProgress } from '../lib/progress';
-import type { Reward, WinSource } from '../lib/progressState';
+import type { Reward } from '../lib/progressState';
 import { RULES, type RuleId } from '../lib/rules';
+import { clearGame, loadGame, saveGame, type SaveSlot } from '../lib/savedGames';
 import { useSettings } from '../lib/settings';
-import type { Puzzle } from '../lib/sudoku';
 import { boardPalette, colors } from '../lib/theme';
-import { formatTime, useSudokuGame } from '../lib/useSudokuGame';
+import { formatTime, useSudokuGame, type SavedGameState } from '../lib/useSudokuGame';
 import { Dialog, DialogButton, DialogText, DialogTitle } from './Dialog';
 import { PlayArea } from './PlayArea';
 import { RewardSummary } from './RewardSummary';
 import { RuleBar } from './RuleBar';
 
-export interface GameSetup {
-  puzzle: Puzzle;
-  source: WinSource;
-  /** Shown above the board, e.g. "Savanna · Level 3 · Easy". */
-  label: string;
-}
+export type GameSetup = GameSetupData;
 
 export interface WinControls {
   replay: () => void;
@@ -49,6 +45,10 @@ interface Props {
   /** Quick play shows a "New game" button under the board. */
   allowNewGame?: boolean;
   winActions: (controls: WinControls) => ReactNode;
+  /** Where to save this game while it's in progress. Omit to never save. */
+  saveSlot?: SaveSlot;
+  /** Name for the Home "Continue" card. Defaults to `title`. */
+  saveTitle?: string;
 }
 
 /** Single-player game screen shared by quick play, adventure levels and the daily puzzle. */
@@ -63,7 +63,14 @@ export function SoloGame(props: Props) {
 
 const NO_MODIFIERS: GameModifiers = { rules: [] };
 
-function SoloGameInner({ title, makeGame, allowNewGame, winActions, modifiers = NO_MODIFIERS }: Props) {
+const RESUMED_BANNER_MS = 3500;
+
+/** Moves made, notes taken or mistakes: an untouched puzzle isn't worth a "Continue" card. */
+function isTouched(setup: GameSetup, s: SavedGameState): boolean {
+  return s.mistakes > 0 || s.hintsUsed > 0 || s.notes.some(Boolean) || s.grid.some((v, i) => v !== setup.puzzle.puzzle[i]);
+}
+
+function SoloGameInner({ title, makeGame, allowNewGame, winActions, modifiers = NO_MODIFIERS, saveSlot: slotProp, saveTitle }: Props) {
   const { settings } = useSettings();
   const { progress, recordWin, markRulesSeen } = useProgress();
   const reducedMotion = useReducedMotion();
@@ -74,7 +81,13 @@ function SoloGameInner({ title, makeGame, allowNewGame, winActions, modifiers = 
   // A limit only makes sense if the player can see which animals are wrong.
   const mistakeLimit = settings.showMistakes ? settings.mistakeLimit : 0;
 
-  const [setup, setSetup] = useState<GameSetup>(makeGame);
+  // The slot is fixed for the life of the screen (a new level remounts), so capture it once.
+  // Callers pass a fresh object each render, which would otherwise re-run the save effects.
+  const [saveSlot] = useState(slotProp);
+  // Resume an unfinished game from this slot if there is one.
+  const [saved] = useState(() => (saveSlot ? loadGame(saveSlot) : null));
+  const [setup, setSetup] = useState<GameSetup>(() => saved?.setup ?? makeGame());
+  const [showResumed, setShowResumed] = useState(saved !== null);
   const [reward, setReward] = useState<Reward | null>(null);
   const [showWin, setShowWin] = useState(false);
   // Explain new rules before play starts (bosses always get their briefing). The clock waits.
@@ -91,8 +104,42 @@ function SoloGameInner({ title, makeGame, allowNewGame, winActions, modifiers = 
     timeLimit: modifiers.timeLimit,
     runaway: modifiers.runaway,
     onWin: (stats) => setReward(recordWin(setup.source, stats)),
+    resume: saved?.state,
   });
-  const { mistakes, seconds, status } = state;
+  const { mistakes, seconds, status, snapshot } = state;
+
+  // Save after every move (and every 10s of play); clear once the game is won or lost.
+  useEffect(() => {
+    if (!saveSlot) return;
+    if (status !== 'playing') clearGame(saveSlot);
+    else if (isTouched(setup, snapshot)) saveGame(saveSlot, saveTitle ?? title, setup, snapshot);
+  }, [saveSlot, saveTitle, title, status, setup, snapshot]);
+
+  // Also save the exact clock when the app goes to the background or the player leaves the screen.
+  const latest = useRef({ setup, snapshot, seconds, playing: status === 'playing' });
+  useEffect(() => {
+    latest.current = { setup, snapshot, seconds, playing: status === 'playing' };
+  });
+  useEffect(() => {
+    if (!saveSlot) return;
+    const flush = () => {
+      const { setup: s, snapshot: snap, seconds: secs, playing } = latest.current;
+      if (playing && isTouched(s, snap)) saveGame(saveSlot, saveTitle ?? title, s, { ...snap, seconds: secs });
+    };
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') flush();
+    });
+    return () => {
+      sub.remove();
+      flush();
+    };
+  }, [saveSlot, saveTitle, title]);
+
+  useEffect(() => {
+    if (!showResumed) return;
+    const id = setTimeout(() => setShowResumed(false), RESUMED_BANNER_MS);
+    return () => clearTimeout(id);
+  }, [showResumed]);
   const terrainIcons = Object.fromEntries((modifiers.terrain ?? []).map((t) => [t.kind, t.emoji]));
 
   const closeBriefing = () => {
@@ -108,6 +155,8 @@ function SoloGameInner({ title, makeGame, allowNewGame, winActions, modifiers = 
   }, [status, reducedMotion]);
 
   const reset = (next: GameSetup) => {
+    if (saveSlot) clearGame(saveSlot);
+    setShowResumed(false);
     setSetup(next);
     setReward(null);
     setShowWin(false);
@@ -130,6 +179,12 @@ function SoloGameInner({ title, makeGame, allowNewGame, winActions, modifiers = 
           ) : null}
           {settings.showTimer && !modifiers.timeLimit ? <Text style={styles.status}>⏱ {formatTime(seconds)}</Text> : null}
         </View>
+
+        {showResumed ? (
+          <View style={[styles.resumed, { width: boardWidth }]} accessibilityLiveRegion="polite">
+            <Text style={styles.resumedText}>▶ Welcome back! Picked up where you left off.</Text>
+          </View>
+        ) : null}
 
         <RuleBar
           rules={modifiers.rules}
@@ -226,6 +281,20 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 16,
     fontWeight: '700',
+  },
+  resumed: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.thinBorder,
+  },
+  resumedText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
   },
   ruleRow: {
     width: '100%',

@@ -25,12 +25,29 @@ interface Options {
   /** A runaway animal sits in an empty square where it belongs and hops every 30s until caught. */
   runaway?: boolean;
   onWin?: (stats: GameStats) => void;
+  /** Pick up a saved game instead of starting fresh. Must match the puzzle from `createInitial`. */
+  resume?: SavedGameState | null;
 }
 
 interface Snapshot {
   grid: number[];
   notes: number[];
 }
+
+/** Everything about a game in progress that's worth saving. */
+export interface SavedGameState {
+  grid: number[];
+  notes: number[];
+  history: Snapshot[];
+  mistakes: number;
+  hintsUsed: number;
+  caught: number;
+  runawaySince: number;
+  seconds: number;
+}
+
+// Undo steps kept in a save (the live game keeps up to 100).
+const SAVED_HISTORY = 30;
 
 export const RUNAWAY_HOP_SECONDS = 30;
 const RUNAWAY_FIRST_AT = 5;
@@ -46,21 +63,21 @@ function hash(a: number, b: number, c: number): number {
 /** Single-player sudoku state and actions. Used by solo play and Race battles. */
 export function useSudokuGame(
   createInitial: () => Puzzle,
-  { mistakeLimit, showMistakes, paused, timeLimit = 0, runaway: runawayEnabled = false, onWin }: Options,
+  { mistakeLimit, showMistakes, paused, timeLimit = 0, runaway: runawayEnabled = false, onWin, resume }: Options,
 ) {
   const feedback = useFeedback();
 
   const [game, setGame] = useState<Puzzle>(createInitial);
-  const [grid, setGrid] = useState<number[]>(() => [...game.puzzle]);
-  const [notes, setNotes] = useState<number[]>(() => new Array(game.puzzle.length).fill(0));
-  const [history, setHistory] = useState<Snapshot[]>([]);
+  const [grid, setGrid] = useState<number[]>(() => resume?.grid ?? [...game.puzzle]);
+  const [notes, setNotes] = useState<number[]>(() => resume?.notes ?? new Array(game.puzzle.length).fill(0));
+  const [history, setHistory] = useState<Snapshot[]>(() => resume?.history ?? []);
   const [selected, setSelected] = useState<number | null>(null);
   const [notesMode, setNotesMode] = useState(false);
-  const [mistakes, setMistakes] = useState(0);
-  const [hintsUsed, setHintsUsed] = useState(0);
-  const [caught, setCaught] = useState(0);
-  const [runawaySince, setRunawaySince] = useState(RUNAWAY_FIRST_AT);
-  const [seconds, setSeconds] = useState(0);
+  const [mistakes, setMistakes] = useState(resume?.mistakes ?? 0);
+  const [hintsUsed, setHintsUsed] = useState(resume?.hintsUsed ?? 0);
+  const [caught, setCaught] = useState(resume?.caught ?? 0);
+  const [runawaySince, setRunawaySince] = useState(resume?.runawaySince ?? RUNAWAY_FIRST_AT);
+  const [seconds, setSeconds] = useState(resume?.seconds ?? 0);
   const [baseStatus, setBaseStatus] = useState<GameStatus>('playing');
   const [lostByMistakes, setLostByMistakes] = useState(false);
   const [celebration, setCelebration] = useState<{ cells: number[]; id: number } | null>(null);
@@ -245,8 +262,18 @@ export function useSudokuGame(
     commit(target, game.solution[target], { mistakes, hintsUsed: hintsUsed + 1, caught });
   };
 
+  // Rebuilt only when something worth saving changes. The clock is rounded to
+  // 10-second steps here so saving doesn't happen every second; the screen saves
+  // the exact time when the app goes to the background.
+  const savedClock = Math.floor(seconds / 10) * 10;
+  const snapshot = useMemo<SavedGameState>(
+    () => ({ grid, notes, history: history.slice(-SAVED_HISTORY), mistakes, hintsUsed, caught, runawaySince, seconds: savedClock }),
+    [grid, notes, history, mistakes, hintsUsed, caught, runawaySince, savedClock],
+  );
+
   return {
     game,
+    snapshot,
     grid,
     notes,
     given,

@@ -31,6 +31,8 @@ export default function LevelScreen() {
       // Remount when moving to the next level so all game state starts fresh.
       key={level.id}
       title={level.boss ? `👑 ${biome.name} Boss` : `${biome.emoji} Level ${level.number}`}
+      saveSlot={{ kind: 'level', levelId: level.id }}
+      saveTitle={level.boss ? `${biome.emoji} ${biome.name} Boss` : `${biome.emoji} ${biome.name} · Level ${level.number}`}
       animals={animalsFor(level.biome)}
       modifiers={{
         rules: levelRules(level),

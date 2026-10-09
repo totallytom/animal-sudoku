@@ -1,4 +1,5 @@
-import { router, type Href } from 'expo-router';
+import { router, useFocusEffect, type Href } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -6,9 +7,22 @@ import { AnimalIcon } from '../components/AnimalIcon';
 import { CurrencyBar } from '../components/CurrencyBar';
 import { getBiome, LEVELS } from '../lib/biomes';
 import { useProgress } from '../lib/progress';
+import { lastSavedGame, type SavedGame, type SaveSlot } from '../lib/savedGames';
 import { useSettings } from '../lib/settings';
 import { DIFFICULTY_LABEL, type BoardSize } from '../lib/sudoku';
 import { colors } from '../lib/theme';
+import { formatTime } from '../lib/useSudokuGame';
+
+function routeFor(slot: SaveSlot): Href {
+  switch (slot.kind) {
+    case 'quick':
+      return { pathname: '/game/[size]', params: { size: String(slot.size) } };
+    case 'level':
+      return { pathname: '/level/[id]', params: { id: slot.levelId } };
+    case 'daily':
+      return '/daily';
+  }
+}
 
 interface Mode {
   size: BoardSize;
@@ -26,6 +40,12 @@ const MODES: Mode[] = [
 export default function HomeScreen() {
   const { settings } = useSettings();
   const { progress, streak, dailyDoneToday, isLevelUnlocked } = useProgress();
+  // Re-check for an unfinished game every time Home comes back into view.
+  const [saved, setSaved] = useState<SavedGame | null>(null);
+  useFocusEffect(useCallback(() => setSaved(lastSavedGame()), []));
+  const savedPercent = saved
+    ? Math.round((saved.state.grid.filter(Boolean).length / saved.state.grid.length) * 100)
+    : 0;
 
   // The first unlocked level that hasn't been cleared yet.
   const nextLevel = LEVELS.find((l) => isLevelUnlocked(l) && !progress.levelStars[l.id]);
@@ -43,6 +63,28 @@ export default function HomeScreen() {
           <Text style={styles.title}>Animal Sudoku</Text>
           <CurrencyBar />
         </View>
+
+        {/* Continue an unfinished game */}
+        {saved ? (
+          <Pressable
+            onPress={() => router.push(routeFor(saved.slot))}
+            style={({ pressed }) => [styles.continue, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel={`Continue ${saved.title}, ${savedPercent} percent filled`}
+          >
+            <Text style={styles.heroEmoji}>▶️</Text>
+            <View style={styles.flex}>
+              <Text style={styles.continueTitle}>Continue</Text>
+              <Text style={styles.continueSubtitle} numberOfLines={1}>
+                {saved.title} · ⏱ {formatTime(saved.state.seconds)}
+              </Text>
+              <View style={styles.continueTrack}>
+                <View style={[styles.continueFill, { width: `${savedPercent}%` }]} />
+              </View>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
+        ) : null}
 
         {/* Adventure */}
         <Pressable
@@ -160,6 +202,38 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  continue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    gap: 14,
+    backgroundColor: colors.surface,
+    borderWidth: 3,
+    borderColor: colors.primary,
+  },
+  continueTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: colors.text,
+  },
+  continueSubtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  continueTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.background,
+    overflow: 'hidden',
+    marginTop: 6,
+  },
+  continueFill: {
+    height: '100%',
+    backgroundColor: colors.primary,
   },
   hero: {
     flexDirection: 'row',
